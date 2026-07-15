@@ -23,6 +23,7 @@ pub(crate) fn config_layer_source_to_api(source: ConfigLayerSource) -> ApiConfig
             ApiConfigLayerSource::Project { dot_codex_folder }
         }
         ConfigLayerSource::SessionFlags => ApiConfigLayerSource::SessionFlags,
+        ConfigLayerSource::EnvLlm { .. } => ApiConfigLayerSource::SessionFlags,
         ConfigLayerSource::LegacyManagedConfigTomlFromFile { file } => {
             ApiConfigLayerSource::LegacyManagedConfigTomlFromFile { file }
         }

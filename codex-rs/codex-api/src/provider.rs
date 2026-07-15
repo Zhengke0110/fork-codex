@@ -130,6 +130,61 @@ fn matches_azure_responses_base_url(base_url: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn provider_with_base_url(base_url: &str) -> Provider {
+        Provider {
+            name: "test".to_string(),
+            base_url: base_url.to_string(),
+            query_params: None,
+            headers: HeaderMap::new(),
+            retry: RetryConfig {
+                max_attempts: 1,
+                base_delay: Duration::from_millis(1),
+                retry_429: false,
+                retry_5xx: true,
+                retry_transport: true,
+            },
+            stream_idle_timeout: Duration::from_secs(1),
+        }
+    }
+
+    #[test]
+    fn url_for_path_joins_chat_completions_without_duplicates() {
+        let cases = [
+            (
+                "https://example.com",
+                "https://example.com/chat/completions",
+            ),
+            (
+                "https://example.com/",
+                "https://example.com/chat/completions",
+            ),
+            (
+                "https://example.com/v1",
+                "https://example.com/v1/chat/completions",
+            ),
+            (
+                "https://example.com/v1/",
+                "https://example.com/v1/chat/completions",
+            ),
+            (
+                "http://127.0.0.1:8787/v1",
+                "http://127.0.0.1:8787/v1/chat/completions",
+            ),
+        ];
+        for (base_url, expected) in cases {
+            let url = provider_with_base_url(base_url).url_for_path("/chat/completions");
+            assert_eq!(url, expected, "base_url = {base_url}");
+            // Guard against the degenerate forms called out in acceptance.
+            assert_eq!(
+                url.matches("/chat/completions").count(),
+                1,
+                "duplicate path segment in {url}"
+            );
+            assert!(!url.contains("//chat"), "double slash in {url}");
+            assert!(!url.contains("/v1/v1"), "doubled /v1 in {url}");
+        }
+    }
+
     #[test]
     fn detects_azure_responses_base_urls() {
         let positive_cases = [

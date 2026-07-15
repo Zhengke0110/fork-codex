@@ -87,6 +87,36 @@ pub fn create_tools_json_for_responses_api(
     Ok(tools_json)
 }
 
+/// Returns JSON values compatible with Function Calling in the Chat
+/// Completions API, where each tool is wrapped as
+/// `{"type":"function","function":{name, description, parameters}}`.
+///
+/// Only `Function` tools have a Chat Completions equivalent with a JSON schema.
+/// Namespace, freeform, web_search, and tool_search tools are omitted (they
+/// have no Chat Completions representation).
+pub fn create_tools_json_for_chat_completions_api(
+    tools: &[ToolSpec],
+) -> Result<Vec<Value>, serde_json::Error> {
+    let mut tools_json = Vec::new();
+
+    for tool in tools {
+        let ToolSpec::Function(function_tool) = tool else {
+            continue;
+        };
+        let parameters = serde_json::to_value(&function_tool.parameters)?;
+        tools_json.push(serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": function_tool.name,
+                "description": function_tool.description,
+                "parameters": parameters,
+            }
+        }));
+    }
+
+    Ok(tools_json)
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ResponsesApiWebSearchFilters {
     #[serde(skip_serializing_if = "Option::is_none")]

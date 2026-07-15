@@ -284,16 +284,29 @@ fn build_runtime() -> anyhow::Result<tokio::runtime::Runtime> {
 }
 
 const ILLEGAL_ENV_VAR_PREFIX: &str = "CODEX_";
+/// Narrow, curated exception to the `CODEX_` filter above: the project-root
+/// `.env` may provide `CODEX_LLM_*` variables to configure a custom
+/// OpenAI-compatible model provider. Only this prefix is honored from the
+/// project-root `.env`; every other `CODEX_*` variable (for example
+/// `CODEX_HOME`, `CODEX_SANDBOX_*`) remains un-overridable.
+const LLM_ENV_VAR_PREFIX: &str = "CODEX_LLM_";
 
-/// Load env vars from ~/.codex/.env.
+/// Load env vars from `~/.codex/.env`, plus `CODEX_LLM_*` from the
+/// project-root `.env`.
 ///
-/// Security: Do not allow `.env` files to create or modify any variables
-/// with names starting with `CODEX_`.
+/// Security: `~/.codex/.env` may set any variable except those starting with
+/// `CODEX_`. The project-root `.env` may set only variables starting with
+/// `CODEX_LLM_`.
 fn load_dotenv() {
     if let Ok(codex_home) = find_codex_home()
         && let Ok(iter) = dotenvy::from_path_iter(codex_home.join(".env"))
     {
         set_filtered(iter);
+    }
+    if let Ok(cwd) = std::env::current_dir()
+        && let Ok(iter) = dotenvy::from_path_iter(cwd.join(".env"))
+    {
+        set_llm_only(iter);
     }
 }
 
@@ -304,6 +317,25 @@ where
 {
     for (key, value) in iter.into_iter().flatten() {
         if !key.to_ascii_uppercase().starts_with(ILLEGAL_ENV_VAR_PREFIX) {
+            // It is safe to call set_var() because our process is
+            // single-threaded at this point in its execution.
+            unsafe { std::env::set_var(&key, &value) };
+        }
+    }
+}
+
+/// Set only `CODEX_LLM_*` variables from a dotenvy iterator sourced from the
+/// project-root `.env`. All other variables — including any other `CODEX_*`
+/// — are ignored. A variable already present in the process environment is
+/// not overridden, so explicit exports win over `.env` values.
+fn set_llm_only<I>(iter: I)
+where
+    I: IntoIterator<Item = Result<(String, String), dotenvy::Error>>,
+{
+    for (key, value) in iter.into_iter().flatten() {
+        if key.to_ascii_uppercase().starts_with(LLM_ENV_VAR_PREFIX)
+            && std::env::var_os(&key).is_none()
+        {
             // It is safe to call set_var() because our process is
             // single-threaded at this point in its execution.
             unsafe { std::env::set_var(&key, &value) };
@@ -532,6 +564,45 @@ mod tests {
     use std::path::Path;
     use std::path::PathBuf;
     use tempfile::TempDir;
+
+    #[test]
+    fn set_llm_only_respects_existing_process_env_over_dotenv() {
+        // nextest isolates each test in its own process, so mutating the
+        // environment here is safe.
+        use std::io::Write;
+
+        // An existing process env var must take priority over the .env value.
+        unsafe {
+            std::env::set_var("CODEX_LLM_API_KEY", "from-process-env");
+        }
+        let dir = TempDir::new().expect("tempdir");
+        let env_path = dir.path().join(".env");
+        let mut f = File::create(&env_path).expect("create .env");
+        writeln!(f, "CODEX_LLM_API_KEY=from-dotenv").expect("write");
+        writeln!(f, "CODEX_LLM_MODEL=from-dotenv-model").expect("write");
+        // A non-`CODEX_LLM_` variable must not be injected by set_llm_only.
+        writeln!(f, "CODEX_INERT=must-not-be-set").expect("write");
+
+        let iter = dotenvy::from_path_iter(&env_path).expect("parse .env");
+        super::set_llm_only(iter);
+
+        // Existing process env var wins over the .env value.
+        assert_eq!(
+            std::env::var("CODEX_LLM_API_KEY").unwrap(),
+            "from-process-env",
+            "process env must take priority over .env"
+        );
+        // A new var only present in .env is loaded.
+        assert_eq!(
+            std::env::var("CODEX_LLM_MODEL").unwrap(),
+            "from-dotenv-model"
+        );
+        // Non-`CODEX_LLM_` variables are not touched by this loader.
+        assert!(
+            std::env::var_os("CODEX_INERT").is_none(),
+            "non-LLM CODEX_ var must not be injected"
+        );
+    }
 
     struct PackagePathTestFixture {
         _temp_dir: TempDir,

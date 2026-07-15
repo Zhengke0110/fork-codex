@@ -17,6 +17,9 @@ pub enum ConfigLayerSource {
     },
     /// Configuration loaded from a project's `.codex` directory.
     Project { dot_codex_folder: AbsolutePathBuf },
+    /// Custom OpenAI-compatible model provider configured via `CODEX_LLM_*`
+    /// variables sourced from the project-root `.env`.
+    EnvLlm { file: Option<AbsolutePathBuf> },
     /// Overrides supplied for the current session.
     SessionFlags,
     /// Legacy managed configuration loaded from a file.
@@ -41,6 +44,7 @@ impl ConfigLayerSource {
                 }
             }
             ConfigLayerSource::Project { .. } => 25,
+            ConfigLayerSource::EnvLlm { .. } => 28,
             ConfigLayerSource::SessionFlags => 30,
             ConfigLayerSource::LegacyManagedConfigTomlFromFile { .. } => 40,
             ConfigLayerSource::LegacyManagedConfigTomlFromMdm => 50,
@@ -92,6 +96,10 @@ pub fn format_config_layer_source(source: &ConfigLayerSource, config_toml_file: 
                 dot_codex_folder.as_path().display()
             )
         }
+        ConfigLayerSource::EnvLlm { file } => match file {
+            Some(file) => format!("custom-llm env ({})", file.as_path().display()),
+            None => "custom-llm env (.env)".to_string(),
+        },
         ConfigLayerSource::SessionFlags => "session-flags".to_string(),
         ConfigLayerSource::LegacyManagedConfigTomlFromFile { file } => {
             format!("legacy managed_config.toml ({})", file.as_path().display())

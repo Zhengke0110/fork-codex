@@ -254,6 +254,9 @@ fn config_path_for_layer(layer: &ConfigLayerEntry, config_toml_file: &str) -> Op
             Some(dot_codex_folder.as_path().join(config_toml_file))
         }
         ConfigLayerSource::LegacyManagedConfigTomlFromFile { file } => Some(file.to_path_buf()),
+        ConfigLayerSource::EnvLlm { file } => file
+            .as_ref()
+            .map(codex_utils_absolute_path::AbsolutePathBuf::to_path_buf),
         ConfigLayerSource::Mdm { .. }
         | ConfigLayerSource::EnterpriseManaged { .. }
         | ConfigLayerSource::SessionFlags

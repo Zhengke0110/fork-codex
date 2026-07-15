@@ -288,6 +288,8 @@ pub async fn load_config_layers_state(
         );
     }
 
+    let env_llm_file = cwd.as_ref().map(|c| c.join(".env"));
+
     let mut startup_warnings = None;
     if let Some(cwd) = cwd {
         let mut merged_so_far = TomlValue::Table(toml::map::Map::new());
@@ -348,6 +350,15 @@ pub async fn load_config_layers_state(
         .await?;
         layers.extend(project_layers.layers);
         startup_warnings = Some(project_layers.startup_warnings);
+    }
+
+    // Register a custom OpenAI-compatible model provider from `CODEX_LLM_*`
+    // variables in the project-root `.env`, when present. Strictly opt-in: the
+    // layer is skipped unless both the API key and base URL are set, so a
+    // normal boot is unaffected. Inserted by precedence so explicit
+    // session/CLI overrides still win.
+    if let Some(env_llm_layer) = build_codex_llm_env_layer(env_llm_file) {
+        insert_layer_by_precedence(&mut layers, env_llm_layer);
     }
 
     // Add a layer for runtime overrides from the CLI or UI, if any exist.
@@ -458,6 +469,89 @@ fn insert_layer_by_precedence(layers: &mut Vec<ConfigLayerEntry>, layer: ConfigL
         Some(index) => layers.insert(index, layer),
         None => layers.push(layer),
     }
+}
+
+/// Build a config layer that registers a custom OpenAI-compatible model
+/// provider from `CODEX_LLM_*` environment variables (loaded from the
+/// project-root `.env` by the `arg0` bootstrap).
+///
+/// Returns `None` unless both `CODEX_LLM_API_KEY` and `CODEX_LLM_BASE_URL` are
+/// set and non-empty, so the feature is strictly opt-in and never affects a
+/// normal Codex boot. The API key is referenced via `env_key` and read lazily
+/// at request time; its value is never embedded in the layer. `CODEX_LLM_MODEL`
+/// and `CODEX_LLM_PROVIDER` are optional (provider id defaults to `codex-llm`).
+fn build_codex_llm_env_layer(env_file: Option<AbsolutePathBuf>) -> Option<ConfigLayerEntry> {
+    std::env::var("CODEX_LLM_API_KEY")
+        .ok()
+        .filter(|v| !v.trim().is_empty())?;
+    let base_url = std::env::var("CODEX_LLM_BASE_URL")
+        .ok()
+        .filter(|v| !v.trim().is_empty())?;
+    let model = std::env::var("CODEX_LLM_MODEL")
+        .ok()
+        .filter(|v| !v.trim().is_empty());
+    let wire_api = match std::env::var("CODEX_LLM_API_STYLE")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .as_deref()
+    {
+        Some("responses") => "responses",
+        // The custom provider targets OpenAI-compatible chat/completions
+        // models, so default to the chat completions wire protocol.
+        _ => "chat_completions",
+    };
+    let stream_idle_timeout_ms = std::env::var("CODEX_LLM_TIMEOUT_SECONDS")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .map(|seconds| seconds as i64 * 1_000);
+    let provider_id = std::env::var("CODEX_LLM_PROVIDER")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| "codex-llm".to_string());
+
+    let mut root = toml::map::Map::new();
+    root.insert(
+        "model_provider".to_string(),
+        TomlValue::String(provider_id.clone()),
+    );
+    if let Some(model) = model {
+        root.insert("model".to_string(), TomlValue::String(model));
+    }
+
+    let mut provider = toml::map::Map::new();
+    provider.insert(
+        "name".to_string(),
+        TomlValue::String("Custom LLM (CODEX_LLM)".to_string()),
+    );
+    provider.insert("base_url".to_string(), TomlValue::String(base_url));
+    provider.insert(
+        "env_key".to_string(),
+        TomlValue::String("CODEX_LLM_API_KEY".to_string()),
+    );
+    provider.insert(
+        "requires_openai_auth".to_string(),
+        TomlValue::Boolean(false),
+    );
+    provider.insert(
+        "wire_api".to_string(),
+        TomlValue::String(wire_api.to_string()),
+    );
+    if let Some(stream_idle_timeout_ms) = stream_idle_timeout_ms {
+        provider.insert(
+            "stream_idle_timeout_ms".to_string(),
+            TomlValue::Integer(stream_idle_timeout_ms),
+        );
+    }
+
+    let mut providers = toml::map::Map::new();
+    providers.insert(provider_id, TomlValue::Table(provider));
+    root.insert("model_providers".to_string(), TomlValue::Table(providers));
+
+    Some(ConfigLayerEntry::new(
+        ConfigLayerSource::EnvLlm { file: env_file },
+        TomlValue::Table(root),
+    ))
 }
 
 /// Attempts to load a config.toml file from `config_toml`.

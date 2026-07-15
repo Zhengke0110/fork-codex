@@ -289,6 +289,9 @@ fn proto_string_map(values: HashMap<String, String>) -> proto::StringMap {
 fn proto_wire_api(wire_api: WireApi) -> proto::WireApi {
     match wire_api {
         WireApi::Responses => proto::WireApi::Responses,
+        // The remote thread-config proto does not model chat_completions; map
+        // it to the responses variant for this test-only helper.
+        WireApi::ChatCompletions => proto::WireApi::Responses,
     }
 }
 

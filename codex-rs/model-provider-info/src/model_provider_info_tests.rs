@@ -107,16 +107,28 @@ env_http_headers = { "X-Example-Env-Header" = "EXAMPLE_ENV_VAR" }
 }
 
 #[test]
-fn test_deserialize_chat_wire_api_shows_helpful_error() {
-    let provider_toml = r#"
-name = "OpenAI using Chat Completions"
-base_url = "https://api.openai.com/v1"
-env_key = "OPENAI_API_KEY"
-wire_api = "chat"
-        "#;
+fn test_deserialize_chat_completions_wire_api() {
+    for wire_api in ["chat_completions", "chat"] {
+        let provider_toml = format!(
+            r#"
+name = "OpenAI-compatible"
+base_url = "https://api.example.com/v1"
+env_key = "EXAMPLE_API_KEY"
+wire_api = "{wire_api}"
+            "#
+        );
+        let provider = toml::from_str::<ModelProviderInfo>(&provider_toml)
+            .expect("chat completions wire_api should deserialize");
+        assert_eq!(provider.wire_api, WireApi::ChatCompletions);
+    }
 
-    let err = toml::from_str::<ModelProviderInfo>(provider_toml).unwrap_err();
-    assert!(err.to_string().contains(CHAT_WIRE_API_REMOVED_ERROR));
+    let unknown_toml = r#"
+name = "Unknown"
+base_url = "https://api.example.com/v1"
+wire_api = "carrier-pigeon"
+        "#;
+    toml::from_str::<ModelProviderInfo>(unknown_toml)
+        .expect_err("unknown wire_api should fail to deserialize");
 }
 
 #[test]

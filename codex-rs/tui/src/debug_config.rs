@@ -309,7 +309,8 @@ fn render_non_file_layer_details(layer: &ConfigLayerEntry) -> Vec<Line<'static>>
         ConfigLayerSource::SessionFlags => render_session_flag_details(&layer.config),
         ConfigLayerSource::Mdm { .. }
         | ConfigLayerSource::EnterpriseManaged { .. }
-        | ConfigLayerSource::LegacyManagedConfigTomlFromMdm => render_non_file_layer_value(layer),
+        | ConfigLayerSource::LegacyManagedConfigTomlFromMdm
+        | ConfigLayerSource::EnvLlm { .. } => render_non_file_layer_value(layer),
         ConfigLayerSource::System { .. }
         | ConfigLayerSource::User { .. }
         | ConfigLayerSource::Project { .. }
@@ -377,7 +378,8 @@ fn non_file_layer_value_label(source: &ConfigLayerSource) -> &'static str {
         | ConfigLayerSource::System { .. }
         | ConfigLayerSource::User { .. }
         | ConfigLayerSource::Project { .. }
-        | ConfigLayerSource::LegacyManagedConfigTomlFromFile { .. } => "Layer value",
+        | ConfigLayerSource::LegacyManagedConfigTomlFromFile { .. }
+        | ConfigLayerSource::EnvLlm { .. } => "Layer value",
     }
 }
 

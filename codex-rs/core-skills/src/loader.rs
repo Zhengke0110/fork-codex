@@ -371,7 +371,8 @@ fn skill_roots_from_layer_stack_inner(
             | ConfigLayerSource::EnterpriseManaged { .. }
             | ConfigLayerSource::SessionFlags
             | ConfigLayerSource::LegacyManagedConfigTomlFromFile { .. }
-            | ConfigLayerSource::LegacyManagedConfigTomlFromMdm => {}
+            | ConfigLayerSource::LegacyManagedConfigTomlFromMdm
+            | ConfigLayerSource::EnvLlm { .. } => {}
         }
     }
 

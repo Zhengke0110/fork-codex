@@ -254,3 +254,134 @@ model = "gpt-dev"
     .await
     .expect("profile-v2 should allow unrelated legacy profiles in base user config");
 }
+
+#[test]
+fn build_codex_llm_env_layer_is_opt_in_and_builds_provider_toml() {
+    // nextest isolates each test in its own process, so mutating the
+    // environment here is safe and cannot leak to other tests.
+
+    // Not configured => no layer (strict opt-in).
+    unsafe {
+        std::env::remove_var("CODEX_LLM_API_KEY");
+        std::env::remove_var("CODEX_LLM_BASE_URL");
+        std::env::remove_var("CODEX_LLM_MODEL");
+        std::env::remove_var("CODEX_LLM_PROVIDER");
+    }
+    assert!(build_codex_llm_env_layer(None).is_none());
+
+    // Base URL only (no key) => still no layer.
+    unsafe {
+        std::env::set_var("CODEX_LLM_BASE_URL", "https://api.example.com");
+    }
+    assert!(build_codex_llm_env_layer(None).is_none());
+
+    // Fully configured => layer with the expected provider TOML.
+    unsafe {
+        std::env::set_var("CODEX_LLM_API_KEY", "test-key");
+        std::env::set_var("CODEX_LLM_MODEL", "deepseek-v4-pro");
+        std::env::set_var("CODEX_LLM_PROVIDER", "custom");
+    }
+    let layer =
+        build_codex_llm_env_layer(None).expect("layer built when key and base url are present");
+    assert_eq!(layer.name, ConfigLayerSource::EnvLlm { file: None });
+    let table = layer.config.as_table().expect("layer config is a table");
+    assert_eq!(
+        table.get("model").and_then(|v| v.as_str()),
+        Some("deepseek-v4-pro")
+    );
+    assert_eq!(
+        table.get("model_provider").and_then(|v| v.as_str()),
+        Some("custom")
+    );
+    let provider = table
+        .get("model_providers")
+        .and_then(|v| v.as_table())
+        .and_then(|t| t.get("custom"))
+        .and_then(|v| v.as_table())
+        .expect("model_providers.custom table");
+    assert_eq!(
+        provider.get("base_url").and_then(|v| v.as_str()),
+        Some("https://api.example.com")
+    );
+    assert_eq!(
+        provider.get("env_key").and_then(|v| v.as_str()),
+        Some("CODEX_LLM_API_KEY")
+    );
+    assert_eq!(
+        provider
+            .get("requires_openai_auth")
+            .and_then(toml::Value::as_bool),
+        Some(false)
+    );
+    // The API key value must never be embedded in the layer; it is read
+    // lazily at request time via `env_key`.
+    assert!(provider.get("experimental_bearer_token").is_none());
+
+    // Defaults: provider id is `codex-llm` and `model` omitted when unset.
+    unsafe {
+        std::env::remove_var("CODEX_LLM_PROVIDER");
+        std::env::remove_var("CODEX_LLM_MODEL");
+    }
+    let layer = build_codex_llm_env_layer(None).expect("layer still built with defaults");
+    let table = layer.config.as_table().expect("layer config is a table");
+    assert!(table.get("model").is_none());
+    assert_eq!(
+        table.get("model_provider").and_then(|v| v.as_str()),
+        Some("codex-llm")
+    );
+}
+
+#[test]
+fn build_codex_llm_env_layer_maps_api_style_and_timeout() {
+    // nextest isolates each test in its own process.
+    unsafe {
+        std::env::set_var("CODEX_LLM_API_KEY", "test-key");
+        std::env::set_var("CODEX_LLM_BASE_URL", "https://api.example.com");
+        std::env::remove_var("CODEX_LLM_MODEL");
+        std::env::remove_var("CODEX_LLM_PROVIDER");
+        std::env::remove_var("CODEX_LLM_API_STYLE");
+        std::env::remove_var("CODEX_LLM_TIMEOUT_SECONDS");
+    }
+
+    let provider_table = |layer: ConfigLayerEntry| -> toml::value::Table {
+        layer
+            .config
+            .as_table()
+            .and_then(|t| t.get("model_providers"))
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("codex-llm"))
+            .and_then(|v| v.as_table())
+            .expect("model_providers.codex-llm table")
+            .clone()
+    };
+
+    // Default API style is chat_completions; no timeout => no field.
+    let provider = provider_table(build_codex_llm_env_layer(None).expect("layer built"));
+    assert_eq!(
+        provider.get("wire_api").and_then(|v| v.as_str()),
+        Some("chat_completions")
+    );
+    assert!(provider.get("stream_idle_timeout_ms").is_none());
+
+    // CODEX_LLM_API_STYLE=responses maps to wire_api=responses.
+    unsafe {
+        std::env::set_var("CODEX_LLM_API_STYLE", "responses");
+    }
+    let provider = provider_table(build_codex_llm_env_layer(None).expect("layer built"));
+    assert_eq!(
+        provider.get("wire_api").and_then(|v| v.as_str()),
+        Some("responses")
+    );
+
+    // CODEX_LLM_TIMEOUT_SECONDS=45 maps to stream_idle_timeout_ms=45000.
+    unsafe {
+        std::env::set_var("CODEX_LLM_TIMEOUT_SECONDS", "45");
+    }
+    let provider = provider_table(build_codex_llm_env_layer(None).expect("layer built"));
+    assert_eq!(
+        provider
+            .get("stream_idle_timeout_ms")
+            .and_then(toml::Value::as_integer),
+        Some(45000)
+    );
+}
